@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: sahara
+          POSTGRES_PASSWORD: sahara
+          POSTGRES_DB: sahara_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sahara"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://sahara:sahara@localhost:5432/sahara_test
+      DIRECT_URL: postgresql://sahara:sahara@localhost:5432/sahara_test
+      TEST_DATABASE_URL: postgresql://sahara:sahara@localhost:5432/sahara_test
+      SESSION_SECRET: ci-secret-not-used-in-production-0123456789abcdef
+      APP_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Prisma schema validation
+        run: npx prisma validate
+
+      - name: Prisma client generation
+        run: npx prisma generate
+
+      - name: Migration validation (clean database)
+        run: npx prisma migrate deploy
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests (unit + integration against PostgreSQL)
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Dependency audit (high severity)
+        run: npm audit --audit-level=high
+        continue-on-error: true

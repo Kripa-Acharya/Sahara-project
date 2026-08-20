@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+/*
+ * साहारा design tokens.
+ * Warm off-white canvas, deep muted teal primaries, soft coral emotional
+ * accents, pale blue calm panels, restrained sage & mustard supports.
+ * Reference: brand illustration board (flat-vector, gentle, Nepalese warmth).
+ */
+@theme {
+  /* Canvas */
+  --color-cream: #faf8f3;
+  --color-cream-dark: #f3f0e9;
+
+  /* Primary — deep muted teal (mapped onto the existing `primary` scale) */
+  --color-primary-50: #eef4f1;
+  --color-primary-100: #dce9e4;
+  --color-primary-200: #b9d3ca;
+  --color-primary-300: #8db5aa;
+  --color-primary-400: #5e9587;
+  --color-primary-500: #3d7a6e;
+  --color-primary-600: #245b55;
+  --color-primary-700: #1d4b46;
+  --color-primary-800: #173c38;
+  --color-primary-900: #12302d;
+
+  /* Soft green support (kept as `leaf` for compatibility) — sage/forest */
+  --color-leaf-50: #f1f6f2;
+  --color-leaf-100: #e0ece3;
+  --color-leaf-200: #afc9b9;
+  --color-leaf-500: #4f8468;
+  --color-leaf-600: #3c6f55;
+  --color-leaf-700: #315c47;
+
+  /* Coral — emotional accent */
+  --color-coral-50: #fdf1ee;
+  --color-coral-100: #f8ddd6;
+  --color-coral-200: #f2c1b5;
+  --color-coral-400: #ee8f7c;
+  --color-coral-500: #e87561;
+  --color-coral-600: #d05a46;
+  --color-coral-700: #ab4636;
+
+  /* Calm informational blue */
+  --color-mist-50: #eef5f9;
+  --color-mist-100: #dceaf2;
+  --color-mist-700: #33606f;
+
+  /* Restrained mustard accent — small doses only */
+  --color-mustard-100: #f7ebcb;
+  --color-mustard-400: #e8c56c;
+  --color-mustard-800: #7a5c1e;
+
+  /* Text & lines */
+  --color-ink: #233b3a;
+  --color-ink-soft: #667573;
+  --color-line: #e4e2dc;
+
+  /* Emergency */
+  --color-danger-50: #fbeeed;
+  --color-danger-100: #f5d8d7;
+  --color-danger-600: #d9534f;
+  --color-danger-700: #b93f3c;
+  --color-danger-900: #7c2a28;
+
+  /*
+   * Remapped Tailwind neutrals & accents so every existing utility class
+   * picks up the साहारा grading (warm greens-grays instead of cool grays,
+   * mustard instead of loud amber, coral instead of harsh rose, mist blue).
+   */
+  --color-stone-50: #faf8f3;
+  --color-stone-100: #f3f0e9;
+  --color-stone-200: #e4e2dc;
+  --color-stone-300: #d3d1c8;
+  --color-stone-400: #9aa5a2;
+  --color-stone-500: #667573;
+  --color-stone-600: #55625f;
+  --color-stone-700: #3d4d4b;
+  --color-stone-800: #233b3a;
+  --color-stone-900: #1a2c2b;
+
+  --color-amber-50: #fbf6e9;
+  --color-amber-100: #f7ebcb;
+  --color-amber-200: #eddca8;
+  --color-amber-300: #e8c56c;
+  --color-amber-600: #a8842e;
+  --color-amber-700: #8f6f24;
+  --color-amber-800: #7a5c1e;
+  --color-amber-900: #644b18;
+
+  --color-rose-50: #fdf1ee;
+  --color-rose-100: #f8ddd6;
+  --color-rose-200: #f2c1b5;
+  --color-rose-300: #ee9f8b;
+  --color-rose-600: #d9534f;
+  --color-rose-700: #b93f3c;
+  --color-rose-800: #9c3532;
+  --color-rose-900: #7c2a28;
+
+  --color-sky-100: #dceaf2;
+  --color-sky-600: #3f7488;
+  --color-sky-700: #33606f;
+  --color-sky-800: #2b5260;
+
+  --color-emerald-50: #f1f6f2;
+  --color-emerald-100: #e0ece3;
+  --color-emerald-200: #afc9b9;
+  --color-emerald-800: #315c47;
+
+  --color-violet-100: #e7e6f0;
+  --color-violet-300: #b6b2d4;
+  --color-violet-700: #575081;
+  --color-violet-800: #494370;
+
+  /* Typography */
+  --font-sans: var(--font-jakarta), var(--font-devanagari), ui-sans-serif, system-ui, sans-serif;
+
+  /* Motion */
+  --animate-rise: rise 0.45s ease-out both;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+:root {
+  --background: var(--color-cream);
+  --foreground: var(--color-ink);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 17px;
+  line-height: 1.65;
+}
+
+/* Devanagari text renders with comfortable ascender/descender room */
+:lang(ne) {
+  line-height: 1.9;
+}
+
+/* Focus visibility for keyboard users */
+:focus-visible {
+  outline: 3px solid var(--color-primary-400);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Calm motion for those who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

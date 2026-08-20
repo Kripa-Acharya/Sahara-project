@@ -1,0 +1,585 @@
+// साहारा — care & companionship platform.
+// PostgreSQL primary database. All timestamps are stored in UTC (timestamptz);
+// presentation code formats them for the viewer (visit times in Asia/Kathmandu).
+// Money is stored as integer whole NPR — never floats.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Enums ----------
+
+enum Role {
+  FAMILY
+  COMPANION
+  ADMIN
+}
+
+enum BookingStatus {
+  DRAFT
+  REQUESTED
+  AWAITING_ASSIGNMENT
+  COMPANION_ASSIGNED
+  ACCEPTED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum AssignmentStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum VisitStatus {
+  SCHEDULED
+  STARTED
+  COMPLETED
+}
+
+enum VerificationStatus {
+  INCOMPLETE
+  UNDER_REVIEW
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum PaymentMethod {
+  INTERNATIONAL_CARD
+  ESEWA
+  KHALTI
+  MOBILE_BANKING
+  CASH
+  REMITTANCE
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+  CASH_DUE
+  CASH_RECEIVED
+}
+
+enum AlertStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+enum NotificationType {
+  BOOKING
+  VISIT
+  PAYMENT
+  MESSAGE
+  EMERGENCY
+  SYSTEM
+}
+
+enum TokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+  PHONE_VERIFY
+}
+
+enum FileKind {
+  VERIFICATION_DOCUMENT
+  VISIT_PHOTO
+  MESSAGE_ATTACHMENT
+}
+
+enum FileStatus {
+  PENDING
+  SCANNING
+  AVAILABLE
+  QUARANTINED
+  DELETED
+}
+
+// ---------- Core models ----------
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  name            String
+  phone           String?
+  role            Role
+  countryCode     String?
+  language        String    @default("en")
+  isActive        Boolean   @default(true)
+  emailVerifiedAt DateTime? @db.Timestamptz(3)
+  phoneVerifiedAt DateTime? @db.Timestamptz(3)
+  // Login throttling
+  failedLoginCount Int      @default(0)
+  lockedUntil     DateTime? @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  familyProfile      FamilyProfile?
+  companionProfile   CompanionProfile?
+  sentMessages       Message[]           @relation("SentMessages")
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  sessions           Session[]
+  verificationTokens VerificationToken[]
+  storedFiles        StoredFile[]
+}
+
+/// Server-side session: the cookie holds an opaque token; only its SHA-256
+/// hash is stored, so a database leak does not leak usable sessions.
+model Session {
+  id           String    @id @default(cuid())
+  tokenHash    String    @unique
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+  lastActiveAt DateTime  @default(now()) @db.Timestamptz(3)
+  expiresAt    DateTime  @db.Timestamptz(3)
+  revokedAt    DateTime? @db.Timestamptz(3)
+  userAgent    String?
+  ipAddress    String?
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+/// Single-use, hashed, expiring tokens for email verification, password
+/// reset and phone verification. Raw tokens are never stored or logged.
+model VerificationToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  type      TokenType
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime  @db.Timestamptz(3)
+  usedAt    DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, type])
+}
+
+/// Uploaded file metadata. Bytes live behind FileStorageProvider (private,
+/// never under /public). Downloads always pass authorization + audit.
+model StoredFile {
+  id           String     @id @default(cuid())
+  kind         FileKind
+  status       FileStatus @default(PENDING)
+  ownerUserId  String
+  owner        User       @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  storageKey   String     @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  sha256       String
+  provider     String     @default("local")
+  scanResult   String?
+  /// Document expiry (e.g. police report validity for companion verification)
+  expiresAt    DateTime?  @db.Timestamptz(3)
+  /// Retention: do not hard-delete before this moment
+  retainUntil  DateTime?  @db.Timestamptz(3)
+  deletedAt    DateTime?  @db.Timestamptz(3)
+  createdAt    DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime   @updatedAt @db.Timestamptz(3)
+
+  citizenshipOf CompanionProfile? @relation("CitizenshipFile")
+  policeReportOf CompanionProfile? @relation("PoliceReportFile")
+
+  @@index([ownerUserId, kind])
+  @@index([status])
+}
+
+model FamilyProfile {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  residenceCity    String?
+  residenceCountry String?
+  timezone         String?
+  createdAt        DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(3)
+
+  elders   ElderProfile[]
+  bookings Booking[]
+  payments Payment[]
+  reviews  Review[]
+}
+
+model ElderProfile {
+  id                String        @id @default(cuid())
+  familyId          String
+  family            FamilyProfile @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  fullName          String
+  nickname          String?
+  age               Int?
+  photoUrl          String?
+  addressLine       String
+  city              String
+  district          String?
+  locationNotes     String?
+  preferredLanguage String        @default("ne")
+  mobilityNotes     String?
+  healthNotes       String?
+  serviceNotes      String?
+  consentToShare    Boolean       @default(false)
+  elderAccessCode   String?       @unique
+  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(3)
+
+  emergencyContacts EmergencyContact[]
+  bookings          Booking[]
+  emergencyAlerts   EmergencyAlert[]
+
+  @@index([familyId])
+}
+
+model EmergencyContact {
+  id        String       @id @default(cuid())
+  elderId   String
+  elder     ElderProfile @relation(fields: [elderId], references: [id], onDelete: Cascade)
+  name      String
+  relation  String
+  phone     String
+  isLocal   Boolean      @default(true)
+  isPrimary Boolean      @default(false)
+  createdAt DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([elderId])
+}
+
+model CompanionProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  photoUrl        String?
+  bio             String?
+  /// Legacy display names for simulated documents (kept for demo continuity).
+  citizenshipDoc  String?
+  policeReportDoc String?
+  /// Real uploaded documents (Phase 4 file architecture).
+  citizenshipFileId  String?     @unique
+  citizenshipFile    StoredFile? @relation("CitizenshipFile", fields: [citizenshipFileId], references: [id], onDelete: SetNull)
+  policeReportFileId String?     @unique
+  policeReportFile   StoredFile? @relation("PoliceReportFile", fields: [policeReportFileId], references: [id], onDelete: SetNull)
+  referenceNotes  String?
+  languages       String   @default("ne")
+  skills          String?
+  serviceAreas    String?
+  hourlyRateNpr   Int      @default(500)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  verification CompanionVerification?
+  assignments  CompanionAssignment[]
+  availability Availability[]
+  reviews      Review[]
+}
+
+model CompanionVerification {
+  id                    String             @id @default(cuid())
+  companionId           String             @unique
+  companion             CompanionProfile   @relation(fields: [companionId], references: [id], onDelete: Cascade)
+  status                VerificationStatus @default(INCOMPLETE)
+  idSubmitted           Boolean            @default(false)
+  policeReportSubmitted Boolean            @default(false)
+  referencesChecked     Boolean            @default(false)
+  phoneVerified         Boolean            @default(false)
+  addressVerified       Boolean            @default(false)
+  interviewCompleted    Boolean            @default(false)
+  orientationCompleted  Boolean            @default(false)
+  skillsReviewed        Boolean            @default(false)
+  emergencyTrainingDone Boolean            @default(false)
+  finalApproval         Boolean            @default(false)
+  adminNotes            String?
+  reviewedAt            DateTime?          @db.Timestamptz(3)
+  createdAt             DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@index([status])
+}
+
+model Availability {
+  id          String           @id @default(cuid())
+  companionId String
+  companion   CompanionProfile @relation(fields: [companionId], references: [id], onDelete: Cascade)
+  weekday     Int
+  startTime   String
+  endTime     String
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@unique([companionId, weekday, startTime])
+}
+
+model Service {
+  id                String   @id @default(cuid())
+  slug              String   @unique
+  name              String
+  nameNe            String?
+  description       String
+  icon              String
+  estimatedMinutes  Int
+  basePriceNpr      Int
+  transportRequired Boolean  @default(false)
+  requiresApproval  Boolean  @default(false)
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  bookingServices BookingService[]
+}
+
+model Booking {
+  id             String         @id @default(cuid())
+  code           String         @unique
+  familyId       String?
+  family         FamilyProfile? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+  elderId        String
+  elder          ElderProfile   @relation(fields: [elderId], references: [id], onDelete: Restrict)
+  status         BookingStatus  @default(REQUESTED)
+  requestedDate  DateTime       @db.Timestamptz(3)
+  requestedTime  String
+  durationMin    Int            @default(60)
+  instructions   String?
+  estimatedNpr   Int            @default(0)
+  finalNpr       Int?
+  isPhoneBooking Boolean        @default(false)
+  callerName     String?
+  callerPhone    String?
+  cancelReason   String?
+  /// Client-generated key preventing duplicate submissions on retry.
+  idempotencyKey String?        @unique
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  services   BookingService[]
+  assignment CompanionAssignment?
+  visit      Visit?
+  payment    Payment?
+  review     Review?
+  thread     MessageThread?
+  alerts     EmergencyAlert[]
+  incidents  Incident[]
+
+  @@index([status, requestedDate])
+  @@index([familyId])
+  @@index([elderId])
+}
+
+model BookingService {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  serviceId String
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  priceNpr  Int
+
+  @@unique([bookingId, serviceId])
+}
+
+model CompanionAssignment {
+  id           String           @id @default(cuid())
+  bookingId    String           @unique
+  booking      Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  companionId  String
+  companion    CompanionProfile @relation(fields: [companionId], references: [id], onDelete: Restrict)
+  status       AssignmentStatus @default(PENDING)
+  assignedById String?
+  respondedAt  DateTime?        @db.Timestamptz(3)
+  rejectReason String?
+  createdAt    DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime         @updatedAt @db.Timestamptz(3)
+
+  @@index([companionId, status])
+}
+
+model Visit {
+  id          String      @id @default(cuid())
+  bookingId   String      @unique
+  booking     Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  status      VisitStatus @default(SCHEDULED)
+  startedAt   DateTime?   @db.Timestamptz(3)
+  completedAt DateTime?   @db.Timestamptz(3)
+  createdAt   DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime    @updatedAt @db.Timestamptz(3)
+
+  report VisitReport?
+}
+
+model VisitReport {
+  id                  String    @id @default(cuid())
+  visitId             String    @unique
+  visit               Visit     @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  arrivalTime         String?
+  departureTime       String?
+  servicesCompleted   String?
+  tasksCompleted      String?
+  wellbeingNote       String?
+  foodNote            String?
+  medicineNote        String?
+  appointmentNote     String?
+  householdConcern    String?
+  safetyConcern       String?
+  companionNotes      String?
+  followUpRecommended Boolean   @default(false)
+  incidentReported    Boolean   @default(false)
+  familyAcknowledged  Boolean   @default(false)
+  acknowledgedAt      DateTime? @db.Timestamptz(3)
+  submittedAt         DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
+
+  photos VisitPhoto[]
+}
+
+model VisitPhoto {
+  id        String      @id @default(cuid())
+  reportId  String
+  report    VisitReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  fileName  String
+  caption   String?
+  createdAt DateTime    @default(now()) @db.Timestamptz(3)
+}
+
+model MessageThread {
+  id            String   @id @default(cuid())
+  bookingId     String?  @unique
+  booking       Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  supportUserId String?  @unique
+  subject       String
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+
+  messages Message[]
+
+  @@index([updatedAt])
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  threadId       String
+  thread         MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User          @relation("SentMessages", fields: [senderId], references: [id], onDelete: Restrict)
+  body           String
+  attachmentName String?
+  readBy         String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+
+  @@index([threadId, createdAt])
+}
+
+model Payment {
+  id        String         @id @default(cuid())
+  bookingId String         @unique
+  booking   Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  familyId  String?
+  family    FamilyProfile? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+  amountNpr Int
+  method    PaymentMethod
+  status    PaymentStatus  @default(PENDING)
+  provider  String         @default("demo")
+  reference String?
+  paidAt    DateTime?      @db.Timestamptz(3)
+  createdAt DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime       @updatedAt @db.Timestamptz(3)
+
+  @@index([status])
+  @@index([familyId])
+}
+
+model Review {
+  id          String           @id @default(cuid())
+  bookingId   String           @unique
+  booking     Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  familyId    String
+  family      FamilyProfile    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  companionId String
+  companion   CompanionProfile @relation(fields: [companionId], references: [id], onDelete: Cascade)
+  rating      Int
+  comment     String?
+  createdAt   DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([companionId])
+}
+
+model EmergencyAlert {
+  id             String       @id @default(cuid())
+  elderId        String
+  elder          ElderProfile @relation(fields: [elderId], references: [id], onDelete: Cascade)
+  bookingId      String?
+  booking        Booking?     @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  raisedBy       String
+  status         AlertStatus  @default(ACTIVE)
+  locationText   String?
+  description    String?
+  acknowledgedAt DateTime?    @db.Timestamptz(3)
+  resolvedAt     DateTime?    @db.Timestamptz(3)
+  resolvedNote   String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+  @@index([elderId])
+}
+
+model Incident {
+  id           String         @id @default(cuid())
+  bookingId    String?
+  booking      Booking?       @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  reportedById String
+  title        String
+  description  String
+  status       IncidentStatus @default(OPEN)
+  resolution   String?
+  createdAt    DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(3)
+
+  @@index([status, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  title     String
+  body      String?
+  linkUrl   String?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+
+  @@index([userId, isRead, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  detail    String?
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([actorId])
+  @@index([createdAt])
+  @@index([action])
+}

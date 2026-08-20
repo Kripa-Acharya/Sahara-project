@@ -1,0 +1,23 @@
+# Local development database for साहारा.
+#   docker compose up -d
+# Then set DATABASE_URL/DIRECT_URL to postgresql://sahara:sahara@localhost:5432/sahara
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sahara
+      POSTGRES_PASSWORD: sahara
+      POSTGRES_DB: sahara
+    ports:
+      - "5432:5432"
+    volumes:
+      - sahara-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sahara -d sahara"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sahara-pgdata:
